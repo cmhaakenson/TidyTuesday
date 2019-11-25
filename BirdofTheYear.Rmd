@@ -1,0 +1,171 @@
+---
+title: "Bird Of the Year Data"
+author: "Chelsea Haakenson"
+date: "11/18/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyr)
+library(dplyr)
+library(stringr)
+library(igraph)
+library(chorddiag)
+```
+
+## Goal:
+
+For this tidy tuesday data set (New Zealand Bird of the Year competition voting data), I wanted to look at the first and second choice votes and see if people were choosing birds that are similar (i.e. in the same taxonomic family) for both votes.
+
+
+
+## Cleaning the data
+
+* reading in the data
+* taking the rows I want (just the votes)
+
+```{r data cleaning, echo=FALSE}
+url <- "https://www.dragonfly.co.nz/data/boty/BOTY-votes-2019.csv"
+dat <- read.csv(url)
+dat$voter <- seq(1,nrow(dat))
+
+# all votes
+botydat <- dat[,4:8]
+botydat[botydat == "NA" | botydat == "" | is.na(botydat)]
+
+# taking the number of vote combinations between 1st choice and 2nd choice
+combinations_v1v2 <- botydat %>% count(vote_1, vote_2)
+```
+
+
+## Making the data into a graph (network) object
+
+```{r graph creation, echo=FALSE}
+# creating a graph
+g <- graph.data.frame(combinations_v1v2)
+
+# creating an adjacency matrix
+adjmat <- as.matrix(as_adjacency_matrix(g))
+
+# getting the edgelist
+edgelist <- get.edgelist(g)
+```
+
+
+## Getting data on phylogenetic family for each species
+
+Taxonomy data taken from the Cornell Lab of Ornithology website
+_eBird Taxonomy v2019_
+
+Not all bird names in the data set matched the names on the voting data, so I looked up the missing ones on google and added them manually.
+
+
+```{r}
+# reading in the data
+url <- "https://www.birds.cornell.edu/clementschecklist/wp-content/uploads/2019/08/eBird_Taxonomy_v2019.csv"
+taxonomy <- read.csv(url)
+
+family <- data.frame(taxonomy$PRIMARY_COM_NAME, taxonomy$FAMILY)
+colnames(family) <- c("bird","family")
+
+# getting the names of each bird in the voting data set
+bird <- as.data.frame(unique(edgelist[,1]))
+colnames(bird) <- "bird"
+
+# merging the taxonomy data and bird names
+birddat <- merge(bird, family, by.x = "bird", by.y = "bird", all.x = TRUE, all.y = FALSE)
+birddat$family <- as.character(birddat$family)
+birddat$family <- str_replace(birddat$family, " \\(.*\\)", "")
+
+# filling in the missing families
+birddat[c(1,18:20,26,38,50,59,68),2] <- "Diomedeidae"
+birddat[2,2] <- "Stercorariidae"
+birddat[3,2] <- "Podicipedidae"
+birddat[c(5,45),2] <- "Charadriidae"
+birddat[8,2] <- "Oreoicidae"
+birddat[c(9,81),2] <- "Ardeidae"
+birddat[c(10,80),2] <- "Procellariidae"
+birddat[c(11,48),2] <- "Petroicidae"
+birddat[c(12,40,52,73),2] <- "Phalacrocoracidae"
+birddat[c(21,65),2] <- "Haematopodidae"
+birddat[22,2] <- "Laridae"
+birddat[23,2] <- "Rhipiduridae"
+birddat[24,2] <- "Locustellidae"
+birddat[25,2] <- "Spheniscidae"
+birddat[c(28,60),2] <- "Anatidae"
+birddat[29,2] <- "Acanthizidae"
+birddat[30,2] <- "Accipitridae"
+birddat[32,2] <- "Nestoridae"
+birddat[33,2] <- "Strigopidae"
+birddat[35,2] <- "Columbidae"
+birddat[36,2] <- "Alcedinidae"
+birddat[c(37,58,64),2] <- "Callaeidae"
+birddat[42,2] <- "Mohouidae"
+birddat[44,2] <- "Podicipedidae"	
+birddat[c(53,72),2] <- "Rallidae"
+birddat[c(56,85),2] <- "Spheniscidae"
+birddat[61,2] <- "Cuculidae"
+birddat[75,2] <- "Meliphagidae"
+```
+
+
+*Looking at a plot of the groups of birds in taxonomic families*
+
+```{r}
+vertices <- data.frame(name = unique(c(as.character(birddat$family), as.character(birddat$bird))))
+mygraph <- graph_from_data_frame(birddat, vertices=vertices )
+plot(mygraph, vertex.label="", edge.arrow.size=0, vertex.size=2)
+```
+
+## Creating the visualization
+
+
+Vertex label arrangement code from [kjhealy's github](https://gist.github.com/kjhealy/834774/2c1bd717ab71f78625b2edf1fdfc8c62b42c94a0)
+
+```{r}
+# color palette
+pal <- rev(c("#8d344c","#ff5987","#be0046","#a01d2a","#ae6a65","#ff7368","#ffa98e","#814205","#ffad16","#a48255","#f7bc5b","#a27e00","#e1c374","#cac98d","#767f00","#84b500","#538d00","#395c15","#7a9866","#98d776","#74dd52","#00aa3d","#54dcb9","#02b2b8","#018eab","#45c1ff","#5daaff","#0088fa","#384d9c","#2557dc","#9f9bff","#9c6df9","#846392","#f0affe","#d15ee4","#ff7fe1","#bf0091","#853569","#ff8cc5","#c98298"))
+
+# setting vertex attributes
+attributes <- vertex.attributes(g)
+vertex_attr(g) <- list(name = attributes$name, fam=c(birddat$family,"none"),color=c(pal[as.factor(birddat$family)],"black"))
+
+# setting edge attributes
+edgeattributes <- edge.attributes(g)
+edge_attr(g) <- list(width = edgeattributes$n/25)
+edge.start <- ends(g, es=E(g), names=F)[,1]
+edge.col <- V(g)$color[edge.start]
+
+# vertex degree
+deg <- degree(g, mode="out")
+
+# layout
+circle <- layout_in_circle(g, order = order(vertex_attr(g)$fam,deg))
+
+# arranging the vertex labels 
+radian.rescale <- function(x, start=0, direction=1) {
+  c.rotate <- function(x) (x + start) %% (2 * pi) * direction
+  c.rotate(scales::rescale(x, c(0, 2 * pi), range(x)))
+}
+lab.locs <- radian.rescale(x=1:86, direction=-1, start=0)
+
+# plot
+plot(g, layout = circle, vertex.label.color = "black", vertex.label.cex = .25, vertex.label.degree = lab.locs, vertex.size = deg/10, edge.color =c(adjustcolor(edge.col[edge.col!="#ffad16"],alpha=0.5),adjustcolor(edge.col[edge.col=="#ffad16"],alpha=0.75)), edge.curved = 0.5, edge.arrow.size = .1)
+# note: I used adjust color to make the edges from most groups more transparent than the edges from the penguins
+```
+
+
+## Failed Attempts
+
+**First try: Chord Diagram**
+
+There were too many connections and it ended up being too slow. 
+
+```{r}
+# code hashed out so it doesn't automatically run and slow down R,
+# feel free to try it though, it's pretty cool although not informative.
+
+
+# chord <- chorddiag(adjmat, groupColors = colors()[1:86], groupnamePadding = 30, groupPadding = 3, showTicks = FALSE)
+```
